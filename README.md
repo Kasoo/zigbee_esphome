@@ -73,7 +73,6 @@ external_components:
     components: [zigbee]
 
 zigbee:
-  use_v2_sdk: true
   components: all # to add all supported components
   ...
 ```
