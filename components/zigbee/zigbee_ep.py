@@ -344,7 +344,7 @@ ep_configs = {
                 CONF_ATTRIBUTES: [
                     {
                         CONF_ATTRIBUTE_ID: 0x0,
-                        CONF_VALUE: 255,
+                        CONF_VALUE: 254,  # ZCL CurrentLevel max is 0xFE
                         CONF_ACCESS: 0,
                         CONF_TYPE: "UINT8",
                         CONF_REPORT: True,
@@ -383,6 +383,17 @@ ep_configs = {
                         CONF_REPORT: False,
                         CONF_SCALE: 1,
                     },
+                    {
+                        # Options: ExecuteIfOff. The SDK briefly sets OnOff=0 while
+                        # handling an On command, so a colour command arriving then
+                        # would otherwise be dropped.
+                        CONF_ATTRIBUTE_ID: 0x000F,
+                        CONF_VALUE: 1,
+                        CONF_ACCESS: 0,
+                        CONF_TYPE: "MAP8",
+                        CONF_REPORT: False,
+                        CONF_SCALE: 1,
+                    },
                 ],
             },
         ],
@@ -411,7 +422,7 @@ ep_configs = {
                 CONF_ATTRIBUTES: [
                     {
                         CONF_ATTRIBUTE_ID: 0x0,
-                        CONF_VALUE: 255,
+                        CONF_VALUE: 254,  # ZCL CurrentLevel max is 0xFE
                         CONF_ACCESS: 0,
                         CONF_TYPE: "UINT8",
                         CONF_REPORT: True,

@@ -1,9 +1,12 @@
+#include <algorithm>
+#include <vector>
 #include "zigbee.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_check.h"
 #include "nvs_flash.h"
 #include "zigbee_attribute.h"
+#include "automation.h"
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 #include "zigbee_helpers.h"
@@ -337,6 +340,78 @@ void ZigBeeComponent::handle_attribute(ezb_zcl_message_info_t info, ezb_zcl_attr
     }
   }
 }
+
+#ifdef USE_LIGHT
+// ZHA sends On and MoveToColor roughly 100 ms apart; treat writes closer than this as one change.
+static constexpr uint32_t LIGHT_SETTLE_MS = 200;
+static constexpr uint32_t LIGHT_SYNC_TIMEOUT_ID = 0x5A4C0000;  // + endpoint id
+
+template<typename T> static bool read_server_attr(uint8_t endpoint_id, uint16_t cluster_id, uint16_t attr_id, T *value) {
+  if (ezb_zcl_get_cluster_desc(endpoint_id, cluster_id, EZB_ZCL_CLUSTER_SERVER) == NULL) {
+    return false;
+  }
+  ezb_zcl_attr_desc_t desc =
+      ezb_zcl_get_attr_desc(endpoint_id, cluster_id, EZB_ZCL_CLUSTER_SERVER, attr_id, EZB_ZCL_STD_MANUF_CODE);
+  return desc && ezb_zcl_attr_desc_get_value(desc, value) == EZB_ERR_NONE;
+}
+
+void ZigBeeComponent::schedule_light_sync(uint8_t endpoint_id, light::LightState *light) {
+  this->set_timeout(LIGHT_SYNC_TIMEOUT_ID + endpoint_id, LIGHT_SETTLE_MS,
+                    [this, endpoint_id, light]() { this->sync_light_(endpoint_id, light); });
+}
+
+// Apply the settled on/off, level and colour attributes to the light in one call, then report them. While handling
+// an On command the stack drives CurrentLevel to MinLevel (0) and OnOff to off before restoring them
+// (esp-zigbee-sdk #751); reporting only the settled values keeps the coordinator from seeing that dip.
+void ZigBeeComponent::sync_light_(uint8_t endpoint_id, light::LightState *light) {
+  static const std::pair<uint16_t, uint16_t> LIGHT_ATTRS[] = {
+      {EZB_ZCL_CLUSTER_ID_ON_OFF, EZB_ZCL_ATTR_ON_OFF_ON_OFF_ID},
+      {EZB_ZCL_CLUSTER_ID_LEVEL, EZB_ZCL_ATTR_LEVEL_CURRENT_LEVEL_ID},
+      {EZB_ZCL_CLUSTER_ID_COLOR_CONTROL, EZB_ZCL_ATTR_COLOR_CONTROL_CURRENT_X_ID},
+      {EZB_ZCL_CLUSTER_ID_COLOR_CONTROL, EZB_ZCL_ATTR_COLOR_CONTROL_CURRENT_Y_ID},
+  };
+  if (!esp_zigbee_lock_acquire(20 / portTICK_PERIOD_MS)) {
+    this->schedule_light_sync(endpoint_id, light);
+    return;
+  }
+  bool on = false;
+  uint8_t level = 0;
+  uint16_t x = 0, y = 0;
+  bool has_on = read_server_attr(endpoint_id, EZB_ZCL_CLUSTER_ID_ON_OFF, EZB_ZCL_ATTR_ON_OFF_ON_OFF_ID, &on);
+  bool has_level =
+      read_server_attr(endpoint_id, EZB_ZCL_CLUSTER_ID_LEVEL, EZB_ZCL_ATTR_LEVEL_CURRENT_LEVEL_ID, &level);
+  bool has_xy =
+      read_server_attr(endpoint_id, EZB_ZCL_CLUSTER_ID_COLOR_CONTROL, EZB_ZCL_ATTR_COLOR_CONTROL_CURRENT_X_ID, &x) &&
+      read_server_attr(endpoint_id, EZB_ZCL_CLUSTER_ID_COLOR_CONTROL, EZB_ZCL_ATTR_COLOR_CONTROL_CURRENT_Y_ID, &y);
+  std::vector<ZigBeeAttribute *> light_attrs;
+  for (const auto &[cluster_id, attr_id] : LIGHT_ATTRS) {
+    auto it = this->attributes_.find({endpoint_id, cluster_id, EZB_ZCL_CLUSTER_SERVER, attr_id});
+    if (it != this->attributes_.end()) {
+      it->second->stop_auto_report();
+      light_attrs.push_back(it->second);
+    }
+  }
+  esp_zigbee_lock_release();
+
+  ESP_LOGD(TAG, "Light sync endpoint %u: on=%d level=%u x=%u y=%u", endpoint_id, on, level, x, y);
+  light::LightCall call = light->make_call();
+  if (has_on) {
+    call.set_state(on);
+  }
+  // Level 0 is MinLevel left behind by an Off command, not a brightness to restore.
+  if (has_level && level > 0) {
+    call.set_brightness(std::min<uint8_t>(level, 254) / 254.0f);
+  }
+  if (has_xy && y > 0) {
+    float fx = x / 65536.0f, fy = y / 65536.0f;
+    call.set_rgb(get_r_from_xy(fx, fy), get_g_from_xy(fx, fy), get_b_from_xy(fx, fy));
+  }
+  call.perform();
+  for (auto *attr : light_attrs) {
+    attr->report();
+  }
+}
+#endif
 
 void ZigBeeComponent::handle_report_attribute(uint8_t dst_endpoint, uint16_t cluster,
                                               ezb_zcl_report_attr_variable_t *variables, ezb_address_t src_address,

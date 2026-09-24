@@ -19,6 +19,9 @@
 #ifdef USE_ZIGBEE_TIME
 #include "time/zigbee_time.h"
 #endif
+#ifdef USE_LIGHT
+#include "esphome/components/light/light_state.h"
+#endif
 
 namespace esphome {
 namespace zigbee {
@@ -90,6 +93,9 @@ class ZigBeeComponent : public Component {
     esp_zigbee_lock_release();
   }
   void report();
+#ifdef USE_LIGHT
+  void schedule_light_sync(uint8_t endpoint_id, light::LightState *light);
+#endif
 
 #ifdef USE_ZIGBEE_TIME
   ZigbeeTime *zt_{nullptr};
@@ -124,6 +130,9 @@ class ZigBeeComponent : public Component {
   void handle_report_attribute(uint8_t dst_endpoint, uint16_t cluster, ezb_zcl_report_attr_variable_t *variables,
                                ezb_address_t src_address, uint8_t src_endpoint);
   void handle_read_attribute_response(ezb_zcl_message_info_t info, ezb_zcl_read_attr_rsp_variable_t *variables);
+#ifdef USE_LIGHT
+  void sync_light_(uint8_t endpoint_id, light::LightState *light);
+#endif
   template<typename... Args> friend void enqueue_zb_event(Args... args);
   esphome::LockFreeQueue<ZBEvent, MAX_ZB_QUEUE_SIZE> zb_events_;
   esphome::EventPool<ZBEvent, MAX_ZB_QUEUE_SIZE> zb_event_pool_;

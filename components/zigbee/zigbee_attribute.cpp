@@ -59,6 +59,8 @@ void ZigBeeAttribute::setup_reporting() {
              this->cluster_id_, this->endpoint_id_);
     this->report_enabled = false;
     this->force_report_ = false;
+  } else if (this->manual_report_) {
+    ezb_zcl_reporting_stop_attr_report(reporting_info);
   } else {
     ESP_LOGD(TAG, "Found reporting info for attr 0x%04X in cluster 0x%04X", this->attr_id_, this->cluster_id_);
     ezb_zcl_attr_variable_t delta = {.u64 = 0};
@@ -67,6 +69,16 @@ void ZigBeeAttribute::setup_reporting() {
     if (ezb_zcl_reporting_start_attr_report(reporting_info) != ESP_OK) {
       ESP_LOGE(TAG, "Could not start reporting for attribute");
     }
+  }
+}
+
+// A Configure Reporting from the coordinator restarts the stack's reporting, so this is repeated before each
+// manual report. Caller must hold the Zigbee lock.
+void ZigBeeAttribute::stop_auto_report() {
+  ezb_zcl_reporting_info_t reporting_info = ezb_zcl_reporting_info_find(
+      this->endpoint_id_, this->cluster_id_, this->role_, this->attr_id_, EZB_ZCL_STD_MANUF_CODE);
+  if (reporting_info != EZB_ZCL_INVALID_REPORTING_INFO) {
+    ezb_zcl_reporting_stop_attr_report(reporting_info);
   }
 }
 

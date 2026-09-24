@@ -50,6 +50,7 @@ class ZigBeeAttribute : public Component {
   void set_report(bool force);
   void report();
   void setup_reporting();
+  void stop_auto_report();
   template<typename T> void set_attr(const T &value);
 
   uint8_t attr_type() { return attr_type_; }
@@ -103,6 +104,7 @@ class ZigBeeAttribute : public Component {
   bool set_attr_requested_{false};
   bool report_requested_{false};
   bool force_report_{false};
+  bool manual_report_{false};  // reported explicitly by the component instead of by the stack's reporting engine
   template<typename T> T scale_value_(float value);
   template<typename T> T invalid_value_();
 };
@@ -231,32 +233,12 @@ template<typename T> void ZigBeeAttribute::connect(switch_::Switch *device, std:
 
 #ifdef USE_LIGHT
 template<typename T> void ZigBeeAttribute::connect(light::LightState *device) {
+  // The stack writes on/off, level and colour one attribute at a time (and transiently while handling an On
+  // command), so don't act on each write: the component applies the settled state once and reports it.
+  this->manual_report_ = true;
   this->add_on_value_callback([=, this](ezb_zcl_attribute_t attribute) {
     if (attribute.data.type == this->attr_type() && attribute.data.value) {
-      light::LightCall call = device->make_call();
-      ESP_LOGD(TAG, "Make light call");
-      if (std::is_same<T, bool>::value) {
-        call.set_state(get_value_by_type<T>(this->attr_type(), attribute.data.value));
-        ESP_LOGD(TAG, "Set state");
-      } else if (this->cluster_id_ == 0x0300 && this->attr_id_ == 0x3) {
-        // set X
-        set_light_color(this->endpoint_id_, &call, get_value_by_type<uint16_t>(this->attr_type(), attribute.data.value),
-                        true);
-        ESP_LOGD(TAG, "Set X");
-      } else if (this->cluster_id_ == 0x0300 && this->attr_id_ == 0x4) {
-        // set Y
-        set_light_color(this->endpoint_id_, &call, get_value_by_type<uint16_t>(this->attr_type(), attribute.data.value),
-                        false);
-        ESP_LOGD(TAG, "Set Y");
-      } else if (this->cluster_id_ != 0x0300 and std::numeric_limits<T>::is_integer) {
-        call.set_brightness((float) get_value_by_type<T>(this->attr_type(), attribute.data.value) /
-                            255);  // integer level between 0 and 255
-        ESP_LOGD(TAG, "Set level: %f", (float) get_value_by_type<T>(this->attr_type(), attribute.data.value) / 255);
-        //} else if (this->cluster_id_ != 0x0300 and std::is_floating_point<T>) {
-        //  call.set_brightness(get_value_by_type<T>(this->attr_type(), attribute.data.value));  //float level between 0
-        //  and 1
-      }
-      call.perform();
+      this->zb_->schedule_light_sync(this->endpoint_id_, device);
     }
   });
 }
