@@ -411,6 +411,47 @@ void ZigBeeComponent::sync_light_(uint8_t endpoint_id, light::LightState *light)
     attr->report();
   }
 }
+
+// After a reboot the stack's light attributes are back at their defaults (off, full level, white), while the light
+// itself may have restored its colour and brightness (restore_mode RESTORE_*). Write the light's state into the
+// attributes and report it, so an On command without a colour doesn't apply the default white.
+void ZigBeeComponent::seed_light_(uint8_t endpoint_id, light::LightState *light) {
+  const auto &values = light->remote_values;
+  bool on = values.is_on();
+  uint8_t level = std::clamp<long>(lroundf(values.get_brightness() * 254.0f), 1, 254);
+  float fx, fy;
+  get_xy_from_rgb(values.get_red(), values.get_green(), values.get_blue(), &fx, &fy);
+  uint16_t x = std::min<long>(lroundf(fx * 65536.0f), 0xFEFF);  // 0xFEFF is the ZCL maximum
+  uint16_t y = std::min<long>(lroundf(fy * 65536.0f), 0xFEFF);
+
+  struct {
+    uint16_t cluster_id, attr_id;
+    void *value;
+  } const seeds[] = {
+      {EZB_ZCL_CLUSTER_ID_ON_OFF, EZB_ZCL_ATTR_ON_OFF_ON_OFF_ID, &on},
+      {EZB_ZCL_CLUSTER_ID_LEVEL, EZB_ZCL_ATTR_LEVEL_CURRENT_LEVEL_ID, &level},
+      {EZB_ZCL_CLUSTER_ID_COLOR_CONTROL, EZB_ZCL_ATTR_COLOR_CONTROL_CURRENT_X_ID, &x},
+      {EZB_ZCL_CLUSTER_ID_COLOR_CONTROL, EZB_ZCL_ATTR_COLOR_CONTROL_CURRENT_Y_ID, &y},
+  };
+  std::vector<ZigBeeAttribute *> light_attrs;
+  esp_zigbee_lock_acquire(portMAX_DELAY);
+  for (const auto &seed : seeds) {
+    auto it = this->attributes_.find({endpoint_id, seed.cluster_id, EZB_ZCL_CLUSTER_SERVER, seed.attr_id});
+    if (it == this->attributes_.end()) {
+      continue;  // e.g. no colour cluster on a dimmable light
+    }
+    ezb_zcl_set_attr_value(endpoint_id, seed.cluster_id, EZB_ZCL_CLUSTER_SERVER, seed.attr_id, EZB_ZCL_STD_MANUF_CODE,
+                           seed.value, false);
+    it->second->stop_auto_report();
+    light_attrs.push_back(it->second);
+  }
+  esp_zigbee_lock_release();
+
+  ESP_LOGD(TAG, "Light seed endpoint %u: on=%d level=%u x=%u y=%u", endpoint_id, on, level, x, y);
+  for (auto *attr : light_attrs) {
+    attr->report();
+  }
+}
 #endif
 
 void ZigBeeComponent::handle_report_attribute(uint8_t dst_endpoint, uint16_t cluster,
@@ -681,6 +722,11 @@ void ZigBeeComponent::loop() {
 
   if (this->joined_.exchange(false)) {
     this->connected_ = true;
+#ifdef USE_LIGHT
+    for (auto &[endpoint_id, light] : this->lights_) {
+      this->seed_light_(endpoint_id, light);
+    }
+#endif
     this->on_join_callback_.call(this->factory_new_);
   } else if (this->connected_) {
     this->disable_loop();  // only disable once connected

@@ -236,6 +236,7 @@ template<typename T> void ZigBeeAttribute::connect(light::LightState *device) {
   // The stack writes on/off, level and colour one attribute at a time (and transiently while handling an On
   // command), so don't act on each write: the component applies the settled state once and reports it.
   this->manual_report_ = true;
+  this->zb_->register_light(this->endpoint_id_, device);
   this->add_on_value_callback([=, this](ezb_zcl_attribute_t attribute) {
     if (attribute.data.type == this->attr_type() && attribute.data.value) {
       this->zb_->schedule_light_sync(this->endpoint_id_, device);

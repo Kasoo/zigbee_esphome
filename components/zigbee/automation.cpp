@@ -49,6 +49,25 @@ float get_b_from_xy(float x, float y) {
   return std::clamp(gamma_correct(b), 0.0f, 1.0f);
 }
 
+/// Inverse of the above: R'G'B' to CIE xy.
+void get_xy_from_rgb(float r, float g, float b, float *x, float *y) {
+  auto linearize = [](float c) { return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f); };
+  r = linearize(r);
+  g = linearize(g);
+  b = linearize(b);
+  float X = r * 0.4124f + g * 0.3576f + b * 0.1805f;
+  float Y = r * 0.2126f + g * 0.7152f + b * 0.0722f;
+  float Z = r * 0.0193f + g * 0.1192f + b * 0.9505f;
+  float sum = X + Y + Z;
+  if (sum <= 0.0f) {  // black has no chromaticity; use the D65 white point
+    *x = 0.3127f;
+    *y = 0.3290f;
+    return;
+  }
+  *x = X / sum;
+  *y = Y / sum;
+}
+
 #ifdef USE_LIGHT
 void set_light_color(uint8_t ep, light::LightCall *call, uint16_t value, bool is_x) {
   static std::map<uint8_t, float> x;

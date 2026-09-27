@@ -94,6 +94,7 @@ class ZigBeeComponent : public Component {
   }
   void report();
 #ifdef USE_LIGHT
+  void register_light(uint8_t endpoint_id, light::LightState *light) { this->lights_[endpoint_id] = light; }
   void schedule_light_sync(uint8_t endpoint_id, light::LightState *light);
 #endif
 
@@ -132,6 +133,8 @@ class ZigBeeComponent : public Component {
   void handle_read_attribute_response(ezb_zcl_message_info_t info, ezb_zcl_read_attr_rsp_variable_t *variables);
 #ifdef USE_LIGHT
   void sync_light_(uint8_t endpoint_id, light::LightState *light);
+  void seed_light_(uint8_t endpoint_id, light::LightState *light);
+  std::map<uint8_t, light::LightState *> lights_;
 #endif
   template<typename... Args> friend void enqueue_zb_event(Args... args);
   esphome::LockFreeQueue<ZBEvent, MAX_ZB_QUEUE_SIZE> zb_events_;
