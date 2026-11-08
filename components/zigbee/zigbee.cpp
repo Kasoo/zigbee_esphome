@@ -404,7 +404,9 @@ void ZigBeeComponent::sync_light_(uint8_t endpoint_id, light::LightState *light)
   }
   if (has_xy && y > 0) {
     float fx = x / 65536.0f, fy = y / 65536.0f;
-    call.set_rgb(get_r_from_xy(fx, fy), get_g_from_xy(fx, fy), get_b_from_xy(fx, fy));
+    float r, g, b;
+    get_rgb_from_xy(fx, fy, &r, &g, &b);
+    call.set_rgb(r, g, b);
   }
   call.perform();
   for (auto *attr : light_attrs) {
