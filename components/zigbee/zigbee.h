@@ -94,8 +94,9 @@ class ZigBeeComponent : public Component {
   }
   void report();
 #ifdef USE_LIGHT
-  void register_light(uint8_t endpoint_id, light::LightState *light) { this->lights_[endpoint_id] = light; }
+  void register_light(uint8_t endpoint_id, light::LightState *light);
   void schedule_light_sync(uint8_t endpoint_id, light::LightState *light);
+  void schedule_light_report(uint8_t endpoint_id, light::LightState *light);
 #endif
 
 #ifdef USE_ZIGBEE_TIME
@@ -135,6 +136,18 @@ class ZigBeeComponent : public Component {
   void sync_light_(uint8_t endpoint_id, light::LightState *light);
   void seed_light_(uint8_t endpoint_id, light::LightState *light);
   std::map<uint8_t, light::LightState *> lights_;
+  // Reports changes made on the device (buttons, automations) back to the coordinator.
+  class LightReporter : public light::LightRemoteValuesListener {
+   public:
+    LightReporter(ZigBeeComponent *zb, uint8_t endpoint_id, light::LightState *light)
+        : zb_(zb), endpoint_id_(endpoint_id), light_(light) {}
+    void on_light_remote_values_update() override { this->zb_->schedule_light_report(this->endpoint_id_, this->light_); }
+
+   protected:
+    ZigBeeComponent *zb_;
+    uint8_t endpoint_id_;
+    light::LightState *light_;
+  };
 #endif
   template<typename... Args> friend void enqueue_zb_event(Args... args);
   esphome::LockFreeQueue<ZBEvent, MAX_ZB_QUEUE_SIZE> zb_events_;

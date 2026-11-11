@@ -345,6 +345,8 @@ void ZigBeeComponent::handle_attribute(ezb_zcl_message_info_t info, ezb_zcl_attr
 // ZHA sends On and MoveToColor roughly 100 ms apart; treat writes closer than this as one change.
 static constexpr uint32_t LIGHT_SETTLE_MS = 200;
 static constexpr uint32_t LIGHT_SYNC_TIMEOUT_ID = 0x5A4C0000;  // + endpoint id
+static constexpr uint32_t LIGHT_REPORT_TIMEOUT_ID = 0x5A520000;  // + endpoint id
+static constexpr uint32_t LIGHT_REPORT_MS = 250;
 
 template<typename T> static bool read_server_attr(uint8_t endpoint_id, uint16_t cluster_id, uint16_t attr_id, T *value) {
   if (ezb_zcl_get_cluster_desc(endpoint_id, cluster_id, EZB_ZCL_CLUSTER_SERVER) == NULL) {
@@ -353,6 +355,25 @@ template<typename T> static bool read_server_attr(uint8_t endpoint_id, uint16_t 
   ezb_zcl_attr_desc_t desc =
       ezb_zcl_get_attr_desc(endpoint_id, cluster_id, EZB_ZCL_CLUSTER_SERVER, attr_id, EZB_ZCL_STD_MANUF_CODE);
   return desc && ezb_zcl_attr_desc_get_value(desc, value) == EZB_ERR_NONE;
+}
+
+// Each of the light's attributes registers it, so add the reporter only once per endpoint.
+void ZigBeeComponent::register_light(uint8_t endpoint_id, light::LightState *light) {
+  if (this->lights_.count(endpoint_id)) {
+    return;
+  }
+  this->lights_[endpoint_id] = light;
+  light->add_remote_values_listener(new LightReporter(this, endpoint_id, light));
+}
+
+// Write the light's state into the attributes and report it, once changes have stopped for LIGHT_REPORT_MS. Skip
+// until joined: the stack isn't running yet, and joining seeds the state anyway.
+void ZigBeeComponent::schedule_light_report(uint8_t endpoint_id, light::LightState *light) {
+  this->set_timeout(LIGHT_REPORT_TIMEOUT_ID + endpoint_id, LIGHT_REPORT_MS, [this, endpoint_id, light]() {
+    if (this->connected_) {
+      this->seed_light_(endpoint_id, light);
+    }
+  });
 }
 
 void ZigBeeComponent::schedule_light_sync(uint8_t endpoint_id, light::LightState *light) {
